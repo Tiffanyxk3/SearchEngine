@@ -1,0 +1,52 @@
+version: "2"         # required to adjust maintainability checks
+checks:
+  argument-count:
+    enabled: true
+  complex-logic:
+    enabled: true
+  file-lines:
+    enabled: true
+  method-complexity:
+    enabled: true
+    config:
+      threshold: 20
+  method-count:
+    enabled: true
+    config:
+      threshold: 30
+  method-lines:
+    enabled: true
+    config:
+      threshold: 30
+  nested-control-flow:
+    enabled: true
+  return-statements:
+    enabled: true
+  similar-code:
+    enabled: true
+  identical-code:
+    enabled: true
+plugins:
+  fixme:
+    enabled: true
+    config:
+      strings:
+      - "TODO"
+exclude_patterns:
+  # begin default exclude patterns
+  - "config/"
+  - "db/"
+  - "dist/"
+  - "features/"
+  - "**/node_modules/"
+  - "script/"
+  - "**/spec/"
+  - "**/test/"
+  - "**/tests/"
+  - "Tests/"
+  - "**/vendor/"
+  - "**/*_test.go"
+  - "**/*.d.ts"
+  # begin project-specific exclude patterns
+  - "out/"
+  - "actual/"
