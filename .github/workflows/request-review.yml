@@ -1,0 +1,113 @@
+name: Request Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Enter the release to have reviewed:'
+        required: true
+
+env:
+  WORKFLOW: 'request-review.yml'
+
+jobs:
+  build:
+    name: "Request Review: ${{ github.event.inputs.release }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for Action Updates
+        id: check-action-update
+        uses: usf-cs212-fall2020/action-update@main
+        with:
+          file: '${{ env.WORKFLOW }}'
+
+      - name: Upload New Action Workflow
+        if: ${{ failure() }}
+        id: upload-action-workflow
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.WORKFLOW }}
+          path: ${{ steps.check-action-update.outputs.action_file }}
+          if-no-files-found: error
+
+      - name: Check Action Result
+        id: output-action-error
+        if: ${{ failure() && steps.upload-action-workflow.outcome == 'success' }}
+        run: |
+          echo "::error ::Update your \"${{ env.WORKFLOW }}\" file from the attached artifact and create a new release."
+      - name: Setup Project Reference
+        run: |
+          echo "Release: ${{ github.event.inputs.release }}"
+          echo "RELEASE_REF=refs/tags/${{ github.event.inputs.release }}" >> $GITHUB_ENV
+          echo "MAIN_PATH=$(pwd)/SearchEngine" >> $GITHUB_ENV
+      - name: Parse Project Release
+        id: parse-project-release
+        uses: usf-cs212-fall2020/action-project-release@main
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Verify Release
+        id: verify-release
+        uses: usf-cs212-fall2020/action-project-verified@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release_number: ${{ steps.parse-project-release.outputs.release_number }}
+
+      - name: Checkout Project Repository
+        uses: actions/checkout@v2
+
+      - name: Check Main Branch Unchanged
+        id: check-unchanged
+        uses: usf-cs212-fall2020/action-project-unchanged@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+          release_number: ${{ steps.parse-project-release.outputs.release_number }}
+
+      - name: Check Compile Result
+        if: ${{ failure() && steps.check-unchanged.outcome == 'failure' }}
+        run: |
+          echo "::error ::Changes detected to the main branch since release ${{ steps.parse-project-release.outputs.release_number }} was created. Please create a new release before requesting code review!"
+      - name: Setup Java JDK 14
+        uses: actions/setup-java@v1
+        with:
+          java-version: 14
+
+      - name: Cache Maven Repository
+        uses: actions/cache@v2
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('${{ env.MAIN_PATH }}/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Compile Project Code
+        id: compile-project
+        uses: usf-cs212-fall2020/action-project-compile@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+          Xlint: 'all'
+          Xdoclint: 'all/private'
+          failOnWarn: 'true'
+
+      - name: Check Compile Result
+        if: ${{ failure() && steps.compile-project.outcome == 'failure' }}
+        run: |
+          echo "::error ::Failed to compile project code without warnings. See the \"Compile Project Code\" step for details."
+      - name: Create Review Branch
+        id: create-branch
+        uses: usf-cs212-fall2020/action-project-branch@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+          release_number: ${{ steps.parse-project-release.outputs.release_number }}
+
+      - name: Check Branch Result
+        if: ${{ failure() && steps.create-branch.outcome == 'failure' }}
+        run: |
+          echo "::error ::Failed to create branch review/${{ steps.parse-project-release.outputs.release_number }} for review. Double-check the branch does not already exist."
+      - name: Create Review Pull Request
+        uses: usf-cs212-fall2020/action-project-pull@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release_number: ${{ steps.parse-project-release.outputs.release_number }}
+          project_number: ${{ steps.parse-project-release.outputs.project_number }}
+          url: ${{ steps.verify-release.outputs.run_url }}
