@@ -1,0 +1,39 @@
+name: Verify Issue
+
+on:
+  issues:
+    types: [opened, reopened]
+
+env:
+  WORKFLOW: 'verify-issue.yml'
+
+jobs:
+  build:
+    name: Verify Issue
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for Action Updates
+        id: check-action-update
+        uses: usf-cs212-fall2020/action-update@main
+        with:
+          file: ${{ env.WORKFLOW }}
+
+      - name: Upload New Action Workflow
+        id: upload-action-workflow
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.WORKFLOW }}
+          path: ${{ steps.check-action-update.outputs.action_file }}
+          if-no-files-found: error
+
+      - name: Check Action Result
+        id: output-action-error
+        if: ${{ failure() && steps.upload-action-workflow.outcome == 'success' }}
+        run: |
+          echo "::error ::Update your \"${{ env.WORKFLOW }}\" file from the attached artifact and create a new release."
+      - name: Verify Issue
+        uses: usf-cs212-fall2020/action-verify-issue@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
