@@ -1,0 +1,151 @@
+# see: https://docs.github.com/en/actions/configuring-and-managing-workflows/sharing-workflow-templates-within-your-organization
+# we do not have the correct plan to use this template in private repositories
+# so this will have to be used to manually update workflows
+
+name: Verify Project
+
+on:
+  release:
+    types: [created, edited]
+
+env:
+  WORKFLOW: 'verify.yml'
+  RELEASE_NUM: 'Unknown'
+  RELEASE_REF: 'Unknown'
+  TEST_REPO: 'project-tests'
+  MAIN_PATH: 'project/SearchEngine'
+  TEST_PATH: 'test/SearchEngineTest'
+
+jobs:
+  build:
+    name: Verify Project
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Project Reference
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          echo "RELEASE_REF=${{ github.ref }}" >> $GITHUB_ENV
+      - name: Check for Action Updates
+        id: check-action-update
+        uses: usf-cs212-fall2020/action-update@main
+        with:
+          file: '${{ env.WORKFLOW }}'
+
+      - name: Upload New Action Workflow
+        if: ${{ failure() }}
+        id: upload-action-workflow
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.WORKFLOW }}
+          path: ${{ steps.check-action-update.outputs.action_file }}
+          if-no-files-found: error
+
+      - name: Check Action Result
+        id: output-action-error
+        if: ${{ failure() && steps.upload-action-workflow.outcome == 'success' }}
+        run: |
+          echo "::error ::Update your \"${{ env.WORKFLOW }}\" file from the attached artifact and create a new release."
+      - name: Parse Project Release
+        id: parse-project-release
+        uses: usf-cs212-fall2020/action-project-release@main
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Checkout Project Repository
+        uses: actions/checkout@v2
+        with:
+          path: project
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Get Test Repository Status
+        uses: actions/github-script@v3
+        id: test-repo-status
+        with:
+          script: |
+            return await github.repos.listCommits({
+              owner: '${{ github.repository_owner }}',
+              repo: '${{ env.TEST_REPO }}',
+              per_page: 1
+            });
+      - name: Cache Test Repository
+        id: cache-project-test
+        uses: actions/cache@v2
+        with:
+          path: test
+          key: ${{ runner.os }}-test-${{ fromJson(steps.test-repo-status.outputs.result).data[0].sha }}
+          restore-keys: |
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-
+      - name: Checkout Test Repository
+        if: ${{ success() && steps.cache-project-test.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v2
+        with:
+          repository: "${{ github.repository_owner }}/${{ env.TEST_REPO }}"
+          path: test
+
+      - name: Setup Fresh Test Environment
+        id: setup-tests
+        uses: usf-cs212-fall2020/action-project-setup@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+          test_path: ${{ env.TEST_PATH }}
+
+      - name: Check Test Setup
+        if: ${{ failure() && steps.setup-tests.outcome == 'failure' }}
+        run: |
+          echo "::error ::Failed to setup fresh test environment. See the \"Setup Fresh Test Environment\" step for details."
+          exit 1
+      - name: Setup Java JDK 14
+        uses: actions/setup-java@v1
+        with:
+          java-version: 14
+
+      - name: Cache Maven Repository
+        uses: actions/cache@v2
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('${{ env.MAIN_PATH }}/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Compile Project Code
+        id: compile-project
+        uses: usf-cs212-fall2020/action-project-compile@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+
+      - name: Check Compile Result
+        if: ${{ failure() && steps.compile-project.outcome == 'failure' }}
+        run: |
+          echo "::error ::Failed to compile project code. See the \"Compile Project Code\" step for details."
+          exit 1
+      - name: Run Project Tests
+        id: run-tests
+        uses: usf-cs212-fall2020/action-project-test@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+          test_class: ${{ steps.parse-project-release.outputs.project_tester }}
+
+      - name: Generate Test Reports
+        id: generate-reports
+        if: ${{ success() || steps.compile-project.outcome == 'success' }}
+        uses: usf-cs212-fall2020/action-project-report@main
+        with:
+          main_path: ${{ env.MAIN_PATH }}
+
+      - name: Save Test Artifacts
+        uses: actions/upload-artifact@v2
+        if: ${{ success() || steps.generate-reports.outcome == 'success' }}
+        with:
+          name: test-reports
+          path: |
+            ${{ steps.generate-reports.outputs.path1 }}
+            ${{ steps.generate-reports.outputs.path2 }}
+      - name: Check Test Results
+        uses: usf-cs212-fall2020/action-project-results@main
+        if: ${{ success() || steps.compile-project.outcome == 'success' }}
+        with:
+          info: "${{ toJson(steps.parse-project-release.outputs) }}"
+          ref: ${{ env.RELEASE_REF }}
+          outcome: ${{ steps.run-tests.outcome }}
+          token: ${{ secrets.GITHUB_TOKEN }}
